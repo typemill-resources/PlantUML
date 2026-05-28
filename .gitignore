@@ -1,0 +1,10 @@
+# Temp directory
+temp/
+
+# Optional zusätzlich sinnvoll
+node_modules/
+vendor/
+*.log
+.env
+.DS_Store
+Thumbs.db

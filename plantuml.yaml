@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Mark Klein
+
+
+# ==============================================================================
+# Typemill Plugin Meta-Information & Configuration
+# ==============================================================================
+# This YAML file defines the core properties, settings, and administration forms
+# for the PlantUML plugin in the Typemill CMS environment.
+# ==============================================================================
+
+name: 'PlantUML'
+version: '1.5.0'
+author: 'Mark Klein'
+link: 'https://github.com/'
+license: 'MIT'
+description: 'Renders PlantUML diagrams from markdown contents. Configure your own PlantUML server.'
+
+# ------------------------------------------------------------------------------
+# DEFAULT SETTINGS
+# ------------------------------------------------------------------------------
+# These settings act as the default fallback logic if the user has not explicitly 
+# saved configuration in the Typemill settings dashboard.
+# ------------------------------------------------------------------------------
+settings:
+  server_url: 'https://www.plantuml.com/plantuml'
+  output_format: 'svg'
+  transparent_background: false
+  border_color: ''
+
+# ------------------------------------------------------------------------------
+# TYPEMILL ADMINISTRATION FORMS
+# ------------------------------------------------------------------------------
+# This structure defines the input forms shown in the Typemill Plugins UI.
+# ------------------------------------------------------------------------------
+forms:
+  fields:
+    # Specifies the external PlantUML generator to use
+    server_url:
+      type: text
+      label: 'PlantUML Server URL'
+      required: true
+      placeholder: 'https://www.plantuml.com/plantuml'
+      help: 'The base URL of the PlantUML server (e.g. https://www.plantuml.com/plantuml).'
+      
+    # Preferred file format output (SVG vs PNG)
+    output_format:
+      type: select
+      label: 'Output Format'
+      options:
+        png: 'PNG Image'
+        svg: 'SVG Vector'
+      required: true
+      help: 'Choose the output format (SVG is recommended for crisp scaling).'
+      
+    # Option to inject transparent background into the PlantUML rendering string
+    transparent_background:
+      type: checkbox
+      label: 'Transparent Background (SVG only)'
+      description: 'Check to enable transparent background for SVG images.'
+      
+    # Option to specify a border color surrounding the generated image
+    border_color:
+      type: text
+      label: 'Border Color'
+      placeholder: '#f5f5f5'
+      help: 'Enter a color (e.g. "black", "#393b41") to add a border. Leave empty for no border.'
