@@ -10,7 +10,7 @@
 # ==============================================================================
 
 name: 'PlantUML'
-version: '1.5.0'
+version: '1.5.1'
 author: 'Mark Klein'
 link: 'https://github.com/'
 license: 'MIT'
@@ -57,7 +57,7 @@ forms:
     transparent_background:
       type: checkbox
       label: 'Transparent Background (SVG only)'
-      description: 'Check to enable transparent background for SVG images.'
+      checkboxlabel: 'Check to enable transparent background for SVG images.'
       
     # Option to specify a border color surrounding the generated image
     border_color:
