@@ -10,7 +10,7 @@
 # ==============================================================================
 
 name: 'PlantUML'
-version: '1.5.1'
+version: '1.5.2'
 author: 'Mark Klein'
 link: 'https://github.com/'
 license: 'MIT'

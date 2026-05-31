@@ -81,10 +81,14 @@ class plantuml extends plugin
      */
     public function onTwigLoaded($event)
     {
+
+/* This throws an error if twig has already been initialized by another plugin.
+
         // Filter for e-book plugins to grab the rendered HTML structure
         $this->addTwigFilter('plantuml', function($content) {
             return $this->processHtmlContent($content);
         });
+*/
 
         // Inject JS script into front-end to render the PlantUML diagrams within the browser.
         // Bypassed during admin/editor routes to avoid manipulating the editor's live preview.

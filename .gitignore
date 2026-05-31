@@ -1,5 +1,6 @@
 # Temp directory
 temp/
+zips/
 
 # Optional zusätzlich sinnvoll
 node_modules/
