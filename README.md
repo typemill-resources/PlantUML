@@ -108,7 +108,7 @@ This will:
 In the standard browser view, diagrams are no longer converted into static Markdown images. Instead, they are rendered dynamically by JavaScript injected by the plugin. The original code remains available in the DOM as a hidden `<pre>` tag. This allows the diagrams to be visually constructed via the external server while preserving the capability for future syntax adjustments.
 
 ## Version Changelog
-- **v1.5.2** (2026-05-30): removed twigFilter because it throws error if already registered.
+- **v1.5.3** (2026-05-30): removed twigFilter because it throws error if already registered.
 - **v1.5.1** (2026-05-30): Used checkboxlabel for configuration in plugin settings. 
 - **v1.5.0** (2026-04-07): Introduced visual markdown block parameters (`align`, `padding`, `size`). Added intelligent offline caching (`temp/`) utilizing MD5 hashing to eliminate redundant remote server queries during eBook generation. Refactored HTML capturing arrays.
 - **v1.4.0** (2026-04-07): Refactored rendering logic: Browser viewing now uses injected JavaScript to render diagrams, preserving original syntax within the DOM for future modifications. Ebook (PDF/epub) generation now fetches and embeds graphics as transient local files prior to document assembly to maximize compatibility.
