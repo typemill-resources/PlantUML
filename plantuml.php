@@ -24,9 +24,10 @@ class plantuml extends plugin
     public static function getSubscribedEvents()
     {
         return [
-            'onHtmlLoaded'     => 'onHtmlLoaded', // Intercept HTML after markdown translation
-            'onCspLoaded'      => 'onCspLoaded',  // Content Security Policy for external images
-            'onTwigLoaded'     => 'onTwigLoaded'  // Inject JS to frontend & add Twig filter for Ebooks
+            'onHtmlLoaded'       => 'onHtmlLoaded',
+            'onExportHtmlLoaded' => 'onExportHtmlLoaded',
+            'onCspLoaded'        => 'onCspLoaded',
+            'onTwigLoaded'       => 'onTwigLoaded',
         ];
     }
 
@@ -41,12 +42,16 @@ class plantuml extends plugin
         $settings = $this->getPluginSettings('plantuml');
         $serverUrl = isset($settings['server_url']) ? $settings['server_url'] : 'https://www.plantuml.com/plantuml';
 
-        // Extract host from URL
         $parsedUrl = parse_url($serverUrl);
         if (isset($parsedUrl['host']))
         {
             $data = $csp->getData();
-            $data[] = $parsedUrl['host'];
+            $host = $parsedUrl['host'];
+            if (isset($parsedUrl['port']))
+            {
+                $host .= ':' . $parsedUrl['port'];
+            }
+            $data[] = $host;
             $csp->setData($data);
         }
     }
@@ -63,9 +68,7 @@ class plantuml extends plugin
     {
         $html = $plugindata->getData();
 
-        // Regex to capture pre/code blocks in HTML with language 'plantuml-diagram' and optional attributes
-        // Matches <pre><code class="language-plantuml-diagram align=center size=500">...</code></pre>
-        $regex = '/<pre><code class="language-plantuml-diagram(.*?)"(?:.*?)?>\s*(.*?)\s*<\/code><\/pre>/ms';
+        $regex = '/<pre><code class="language-plantuml-diagram(.*?)"[^>]*>\s*(.*?)\s*<\/code><\/pre>/ms';
 
         $newHtml = preg_replace_callback($regex, array($this, 'processHtmlForBrowser'), $html);
 
@@ -73,26 +76,59 @@ class plantuml extends plugin
     }
 
     /**
-     * Executes when Twig initializes. We use this to register:
-     * 1. A Twig filter "plantuml" for Ebook/PDF generation algorithms.
-     * 2. An inline JavaScript snippet to the actual Web-Frontend to dynamically fetch the server image.
+     * Generates export-safe HTML by replacing browser-render divs with static <img> tags.
+     * Assets are cached under /cache/generated/plantuml/ via the core generateStaticAsset helper.
+     *
+     * @param object $event The export HTML event.
+     */
+    public function onExportHtmlLoaded($event)
+    {
+        $data = $event->getData();
+        $html = is_array($data) ? $data['html'] : $data;
+
+        // Handle raw <pre><code> blocks (if export plugin skipped onHtmlLoaded)
+        $regex1 = '/<pre><code class="language-plantuml-diagram(.*?)"[^>]*>\s*(.*?)\s*<\/code><\/pre>/ms';
+        $html = preg_replace_callback($regex1, function ($matches) {
+            $attrs = $this->parseAttributes($matches[1]);
+            $code  = html_entity_decode($matches[2], ENT_QUOTES | ENT_HTML5);
+            return $this->renderStaticPlantUml($code, $attrs);
+        }, $html);
+
+        // Handle already-transformed browser-render divs
+        $regex2 = '/<div class="plantuml-browser-render"[^>]*>.*?<pre class="plantuml-original-code"[^>]*><code>(.*?)<\/code><\/pre>.*?<\/div>/ms';
+        $html = preg_replace_callback($regex2, function ($matches) {
+            $code = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
+
+            $attrs = [];
+            if (preg_match('/data-plantuml-align="([^"]*)"/', $matches[0], $m)) $attrs['align'] = $m[1];
+            if (preg_match('/data-plantuml-padding="([^"]*)"/', $matches[0], $m)) $attrs['padding'] = $m[1];
+            if (preg_match('/data-plantuml-size="([^"]*)"/', $matches[0], $m)) $attrs['size'] = $m[1];
+            $attrs += ['align' => 'center', 'padding' => '', 'size' => ''];
+
+            return $this->renderStaticPlantUml($code, $attrs);
+        }, $html);
+
+        if (is_array($data))
+        {
+            $data['html'] = $html;
+            $event->setData($data);
+        }
+        else
+        {
+            $event->setData($html);
+        }
+    }
+
+    /**
+     * Executes when Twig initializes. Injects an inline JavaScript snippet
+     * to the Web-Frontend to dynamically fetch and display PlantUML server images.
      *
      * @param object $event
      */
     public function onTwigLoaded($event)
     {
-
-/* This throws an error if twig has already been initialized by another plugin.
-
-        // Filter for e-book plugins to grab the rendered HTML structure
-        $this->addTwigFilter('plantuml', function($content) {
-            return $this->processHtmlContent($content);
-        });
-*/
-
-        // Inject JS script into front-end to render the PlantUML diagrams within the browser.
-        // Bypassed during admin/editor routes to avoid manipulating the editor's live preview.
-        if (!$this->adminroute && !$this->editorroute) {
+        if (!$this->adminroute && !$this->editorroute)
+        {
             $this->addInlineJS('
                 document.addEventListener("DOMContentLoaded", function() {
                     var items = document.querySelectorAll(".plantuml-browser-render");
@@ -103,8 +139,7 @@ class plantuml extends plugin
                             img.src = url;
                             img.alt = "PlantUML diagram";
                             img.className = "plantuml-diagram-image";
-                            
-                            // Retrieve and apply dynamic CSS sizes
+                                
                             var size = item.getAttribute("data-plantuml-size");
                             if (size && size !== "") {
                                 img.style.maxWidth = size;
@@ -113,7 +148,6 @@ class plantuml extends plugin
                                 img.style.maxWidth = "100%";
                             }
 
-                            // Apply formatting alignment padding inherited from attributes
                             var align = item.getAttribute("data-plantuml-align");
                             if (align) item.style.textAlign = align;
 
@@ -126,26 +160,6 @@ class plantuml extends plugin
                 });
             ');
         }
-    }
-
-    /**
-     * Interceptor used by the {{ content | plantuml }} Twig filter (specifically during Ebook/PDF runs).
-     * Finds PlantUML blocks and triggers local caching algorithms.
-     */
-    private function processHtmlContent($content)
-    {
-        // For Ebook/PDF, the Twig filter might encounter the original <pre> code block (if Ebook plugin skips onHtmlLoaded)
-        // OR it might encounter the div wrapper (if onHtmlLoaded fired first). We handle both via distinct regexes!
-
-        // Regex 1: Match raw pre/code blocks with optional attributes
-        $regex1 = '/<pre><code class="language-plantuml-diagram(.*?)"(?:.*?)?>\s*(.*?)\s*<\/code><\/pre>/ms';
-        $content = preg_replace_callback($regex1, array($this, 'processRawMatchesLocalHtml'), $content);
-
-        // Regex 2: Match the browser-rendered div structure we inject via onHtmlLoaded
-        $regex2 = '/<div class="plantuml-browser-render"\s+data-plantuml-url="(.*?)"\s*(.*?)>(.*?)<\/div>/ms';
-        $content = preg_replace_callback($regex2, array($this, 'processHtmlMatches'), $content);
-
-        return $content;
     }
 
     /**
@@ -162,46 +176,11 @@ class plantuml extends plugin
 
         $rules = ['align', 'padding', 'size'];
         foreach ($rules as $rule) {
-            // Regex match specific rules surrounded by empty spacing ignoring case.
             if (preg_match('/(?:^|\s)' . $rule . '=["\']?([^"\'\s]+)["\']?(?:\s|$)/i', $attrString, $m)) {
                 $defaults[$rule] = $m[1];
             }
         }
         return $defaults;
-    }
-
-    /**
-     * Handler for the Twig Filter targeting Raw Markdown.
-     * Takes standard Parsedown code blocks and replaces them directly with the cached PDF image structure.
-     */
-    private function processRawMatchesLocalHtml($matches)
-    {
-        if (!empty($matches[2])) {
-            $attrs = $this->parseAttributes($matches[1]);
-            $code = html_entity_decode($matches[2], ENT_QUOTES | ENT_HTML5);
-            $imageUrl = $this->generatePlantUmlUrl($code);
-            return $this->generateLocalPlantUmlHtml($imageUrl, $attrs);
-        }
-        return $matches[0];
-    }
-
-    /**
-     * Handler for the Twig Filter targeting pre-modified DOM blocks.
-     * Overrides browser-based JS structures with a direct static image format during eBook generation.
-     */
-    private function processHtmlMatches($matches)
-    {
-        if (!empty($matches[1])) {
-            $imageUrl = $matches[1];
-            // Decode any entities from URL
-            $imageUrl = htmlspecialchars_decode($imageUrl, ENT_QUOTES);
-            
-            // Extract the attributes from the div tags we stored earlier
-            $attrs = $this->parseAttributes($matches[2]);
-            return $this->generateLocalPlantUmlHtml($imageUrl, $attrs);
-        }
-
-        return $matches[0];
     }
 
     /**
@@ -212,16 +191,13 @@ class plantuml extends plugin
     {
         if (!empty($matches[2])) {
             $attrs = $this->parseAttributes($matches[1]);
-            // Because Parsedown encodes the HTML, we must decode it first to generate the correct plantuml code URL.
             $code = html_entity_decode($matches[2], ENT_QUOTES | ENT_HTML5);
             $imageUrl = $this->generatePlantUmlUrl($code);
             
-            // Return HTML container with generated URL and attributes.
             $alignStr = ' data-plantuml-align="' . htmlspecialchars($attrs['align']) . '"';
             $paddingStr = !empty($attrs['padding']) ? (' data-plantuml-padding="' . htmlspecialchars($attrs['padding']) . '"') : '';
             $sizeStr = !empty($attrs['size']) ? (' data-plantuml-size="' . htmlspecialchars($attrs['size']) . '"') : '';
             
-            // Apply a default text-align strictly to the div as well, inline, to avoid FOUC before JS loads.
             $styleStr = ' style="text-align: ' . htmlspecialchars($attrs['align']) . ';"';
 
             $html = '<div class="plantuml-browser-render" data-plantuml-url="' . htmlspecialchars($imageUrl, ENT_QUOTES) . '"' . $alignStr . $paddingStr . $sizeStr . $styleStr . '>' . "\n";
@@ -237,93 +213,133 @@ class plantuml extends plugin
     /**
      * Generates an external URI payload reflecting the PlantUML architecture.
      * Evaluates transparent background and border settings.
-     * Uses `PlantUmlEncoder` to base64 translate the data using DEFALTE algorithms.
+     * Uses `PlantUmlEncoder` to base64 translate the data using DEFLATE algorithms.
      */
-    private function generatePlantUmlUrl($code)
+    private function generatePlantUmlUrl($code, array $params = null)
     {
-         // Get settings
-        $settings = $this->getPluginSettings('plantuml');
-        
-        $serverUrl = isset($settings['server_url']) ? rtrim($settings['server_url'], '/') : 'https://www.plantuml.com/plantuml';
-        $format = isset($settings['output_format']) ? $settings['output_format'] : 'svg';
-        $transparent = isset($settings['transparent_background']) ? $settings['transparent_background'] : false;
-        $borderColor = isset($settings['border_color']) ? trim($settings['border_color']) : '';
+        if ($params === null)
+        {
+            $settings = $this->getPluginSettings('plantuml');
+            $params = [
+                'server_url'             => isset($settings['server_url']) ? rtrim($settings['server_url'], '/') : 'https://www.plantuml.com/plantuml',
+                'format'                 => isset($settings['output_format']) ? $settings['output_format'] : 'svg',
+                'transparent_background' => isset($settings['transparent_background']) ? $settings['transparent_background'] : false,
+                'border_color'           => isset($settings['border_color']) ? trim($settings['border_color']) : '',
+            ];
+        }
 
-        // Trim whitespace
+        $serverUrl   = $params['server_url'];
+        $format      = $params['format'];
+        $transparent = $params['transparent_background'];
+        $borderColor = $params['border_color'];
+
         $code = trim($code);
-
-        // Remove @startuml and @enduml if present (though not strictly required inside the block, nice to have)
         $code = str_replace(['@startuml', '@enduml'], '', $code);
 
-        // Add transparent background for SVG if requested AND enabled
         if ($format === 'svg' && $transparent) {
             $code = "skinparam backgroundcolor transparent\n" . $code;
         }
 
-        // Add border if configured
         if (!empty($borderColor)) {
             $code = "skinparam DiagramBorderColor $borderColor\nskinparam DiagramBorderThickness 1\nskinparam pageBorderColor $borderColor\nskinparam pageMargin 10\n" . $code;
         }
         
-        // Encode
-        require_once __DIR__ . '/PlantUmlEncoder.php';
         $encoder = new PlantUmlEncoder();
         $encoded = $encoder->encode($code);
 
-        // Build URL
         return $serverUrl . '/' . $format . '/' . $encoded;
     }
 
-    private function generatePlantUmlImage($code)
+    /**
+     * Renders a PlantUML diagram to a static asset for export (EPUB/PDF/static).
+     * Uses the core generateStaticAsset helper for deterministic caching under /cache/generated/.
+     */
+    private function renderStaticPlantUml(string $code, array $attrs): string
     {
-        $imageUrl = $this->generatePlantUmlUrl($code);
-        return "![PlantUML diagram]($imageUrl)";
+        $settings = $this->getPluginSettings('plantuml');
+        
+        $cacheKey = json_encode([
+            'code'                 => $code,
+            'server_url'           => $settings['server_url']  ?? 'https://www.plantuml.com/plantuml',
+            'format'               => $settings['output_format'] ?? 'svg',
+            'transparent_background' => $settings['transparent_background'] ?? false,
+            'border_color'         => $settings['border_color'] ?? '',
+        ]);
+        
+        $extension = $settings['output_format'] ?? 'svg';
+
+        $url = $this->generateStaticAsset(
+            $cacheKey,
+            function ($key) {
+                $params = json_decode($key, true);
+                $remoteUrl = $this->generatePlantUmlUrl($params['code'], $params);
+                $content = $this->fetchRemoteImage($remoteUrl);
+                
+                if ($content === false) {
+                    return '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="40"><text x="10" y="25">PlantUML render error</text></svg>';
+                }
+                
+                return $content;
+            },
+            $extension
+        );
+
+        return $this->buildFigureHtml($url, $attrs);
     }
 
     /**
-     * Downloads and permanently caches the PlantUML graphic into a local disk structure. 
-     * Necessary to supply eBooks (mPDF, DomPDF) with raw embedded objects rather than Cross-Origin 3rd-party domains.
-     * The `temp` directory avoids internal Typemill Download wrappers.
+     * Fetches a remote image with fallback from file_get_contents to curl.
+     * Respects allow_url_fopen and applies a 10-second timeout.
      */
-    private function generateLocalPlantUmlHtml($imageUrl, $attributes = [])
+    private function fetchRemoteImage(string $url): string|false
     {
-        // Pre-create the image locally for Ebook PDF/ePub generation.
-        $targetDir = __DIR__ . '/temp/';
-        if (!is_dir($targetDir)) {
-            mkdir($targetDir, 0755, true);
-        }
-        
-        $extension = (strpos($imageUrl, '/png/') !== false) ? 'png' : 'svg';
-        // Unique file name based on URL, prevents infinite accumulation while updating the image contents.
-        $fileName = 'plantuml_' . md5($imageUrl) . '.' . $extension;
-        $localPath = $targetDir . $fileName;
-        
-        // Cache the image download. Only download if the file doesn't exist.
-        if (!file_exists($localPath)) {
+        if (ini_get('allow_url_fopen'))
+        {
             $context = stream_context_create([
-                "http" => [
-                    "header" => "User-Agent: Typemill-PlantUML-Plugin\r\n"
+                'http' => [
+                    'header'  => "User-Agent: Typemill-PlantUML-Plugin\r\n",
+                    'timeout' => 10,
                 ]
             ]);
-            
-            $imageContent = file_get_contents($imageUrl, false, $context);
-            if ($imageContent !== false) {
-                file_put_contents($localPath, $imageContent);
+            $result = @file_get_contents($url, false, $context);
+            if ($result !== false)
+            {
+                return $result;
             }
         }
         
-        // Output local file path for PDF rendering. Must include baseurl so it doesn't break on subroutes.
-        $baseUrl = isset($this->urlinfo['baseurl']) ? rtrim($this->urlinfo['baseurl'], '/') : '';
-        $localUrl = $baseUrl . '/plugins/plantuml/temp/' . $fileName;
+        if (function_exists('curl_init'))
+        {
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Typemill-PlantUML-Plugin');
+            $result = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            
+            if ($result !== false && $httpCode >= 200 && $httpCode < 300)
+            {
+                return $result;
+            }
+        }
+        
+        return false;
+    }
 
-        // Apply attributes
-        $align = $attributes['align'] ?? 'center';
+    /**
+     * Builds the final <figure> HTML for a static PlantUML image.
+     */
+    private function buildFigureHtml(string $imageUrl, array $attributes = []): string
+    {
+        $align   = $attributes['align'] ?? 'center';
         $padding = $attributes['padding'] ?? '';
-        $size = $attributes['size'] ?? '';
+        $size    = $attributes['size'] ?? '';
         
         $figureStyle = "text-align: {$align};" . (!empty($padding) ? " padding: {$padding};" : "") . " margin: 0;";
-        $imgStyle = !empty($size) ? "max-width: {$size}; width: 100%;" : "max-width: 100%;";
+        $imgStyle    = !empty($size) ? "max-width: {$size}; width: 100%;" : "max-width: 100%;";
         
-        return '<figure style="' . $figureStyle . '"><img src="' . $localUrl . '" alt="PlantUML diagram" class="plantuml-diagram" style="' . $imgStyle . '" /></figure>';
+        return '<figure style="' . $figureStyle . '"><img src="' . htmlspecialchars($imageUrl, ENT_QUOTES) . '" alt="PlantUML diagram" class="plantuml-diagram" style="' . $imgStyle . '" /></figure>';
     }
 }

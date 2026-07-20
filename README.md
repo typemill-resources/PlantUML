@@ -81,34 +81,36 @@ This plugin is open-sourced software licensed under the [MIT license](https://op
 
 - GitHub Repository: [jawira/plantuml-encoding](https://github.com/jawira/plantuml-encoding)
 
-## Ebook Support
+## Export & Ebook Support
 
-This plugin supports Ebook generation (PDF/ePub) via the **Ebooks** plugin.
+This plugin supports export formats like **EPUB**, **PDF**, and **static site exports** via Typemill's `onExportHtmlLoaded` event.
 
-### Automatic Rendering
+### How It Works
 
-In standard Typemill pages, diagrams are rendered automatically via Markdown hooks.
+When an export plugin (e.g. Ebooks) requests export-safe HTML, the PlantUML plugin automatically:
 
-### Ebook Layouts
+1.  Finds all `plantuml-diagram` blocks in the HTML content.
+2.  Downloads the rendered image from the configured PlantUML server.
+3.  Caches the image under `/cache/generated/plantuml/` using a SHA1 content hash that includes all rendering parameters (server URL, format, transparency, border color).
+4.  Replaces the dynamic browser markup with a static `<img>` tag wrapped in a `<figure>` element.
 
-For PDF/ePub generation, the plugin provides a Twig filter `plantuml` to render diagrams within your book layouts.
-
-Example usage in a layout template (e.g., `index.twig`):
-
-    {{ chapter.content | plantuml }}
-
-This will:
-1.  Find PlantUML diagram wrappers in the HTML content.
-2.  Download the rendered image from the PlantUML server.
-3.  Save the image locally (e.g., `plugins/plantuml/temp/plantuml_hash.svg`) to ensure maximum compatibility with PDF/ePub generators. The image is only downloaded if it doesn't exist yet (smart offline caching based on the underlying diagram content hash).
-4.  Wrap the local image tag in a `<figure>` tag for automatic centering (if supported by the layout CSS).
+No Twig filters or manual template changes are required. The export plugin simply dispatches `onExportHtmlLoaded` and receives fully static, self-contained HTML.
 
 ### Browser Rendering
 
-In the standard browser view, diagrams are no longer converted into static Markdown images. Instead, they are rendered dynamically by JavaScript injected by the plugin. The original code remains available in the DOM as a hidden `<pre>` tag. This allows the diagrams to be visually constructed via the external server while preserving the capability for future syntax adjustments.
+In the standard browser view, diagrams are rendered dynamically by JavaScript injected by the plugin. The original code remains available in the DOM as a hidden `<pre>` tag. This allows the diagrams to be visually constructed via the external server while preserving the capability for future syntax adjustments.
+
+### Requirements for Export
+
+- The export plugin must dispatch the `onExportHtmlLoaded` event before generating the final output.
+- The PlantUML server must be reachable from the host (the plugin checks `allow_url_fopen` and falls back to `curl`).
+- Cached assets are stored in `/cache/generated/plantuml/` and can be safely deleted at any time.
 
 ## Version Changelog
+
+- **v1.6.0** (15.07.2026): Added `onExportHtmlLoaded` support for export-safe HTML generation (EPUB/PDF/static). Removed broken Twig filter. Migrated cache from `plugins/plantuml/temp/` to `/cache/generated/plantuml/` via core `generateStaticAsset()` helper. Added composite cache key with all rendering parameters. Added `fetchRemoteImage()` with `allow_url_fopen` check, curl fallback, and 10-second timeout. Fixed CSP port bug for non-standard ports. Simplified regex noise.
 - **v1.5.3** (2026-05-30): removed twigFilter because it throws error if already registered.
+- **v1.5.2** (2026-05-30): removed twigFilter because it throws error if already registered.
 - **v1.5.1** (2026-05-30): Used checkboxlabel for configuration in plugin settings. 
 - **v1.5.0** (2026-04-07): Introduced visual markdown block parameters (`align`, `padding`, `size`). Added intelligent offline caching (`temp/`) utilizing MD5 hashing to eliminate redundant remote server queries during eBook generation. Refactored HTML capturing arrays.
 - **v1.4.0** (2026-04-07): Refactored rendering logic: Browser viewing now uses injected JavaScript to render diagrams, preserving original syntax within the DOM for future modifications. Ebook (PDF/epub) generation now fetches and embeds graphics as transient local files prior to document assembly to maximize compatibility.
@@ -119,4 +121,4 @@ In the standard browser view, diagrams are no longer converted into static Markd
 - **v1.0.0** (2025-12-30): Initial release.
 
 ---
-v1.5.2 | © 2026  by M. Klein
+v1.6.0 | © 2026  by M. Klein
