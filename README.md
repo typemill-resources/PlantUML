@@ -12,7 +12,7 @@ This plugin allows you to generate PlantUML diagrams directly within your [Typem
 ## Requirements
 
 - Typemill v2.21.3 or higher.
-- PHP 8.1 or higher.
+- PHP 8.2 or higher.
 
 ## Installation
 
@@ -108,6 +108,7 @@ In the standard browser view, diagrams are rendered dynamically by JavaScript in
 
 ## Version Changelog
 
+- **v1.6.1** (10.08.2026): Fixed PHP 8.4/8.5 deprecation by explicitly marking the `$params` parameter of `generatePlantUmlUrl()` as nullable (`?array`). Verified compatibility with PHP 8.2, 8.3, 8.4, and 8.5.
 - **v1.6.0** (15.07.2026): Added `onExportHtmlLoaded` support for export-safe HTML generation (EPUB/PDF/static). Removed broken Twig filter. Migrated cache from `plugins/plantuml/temp/` to `/cache/generated/plantuml/` via core `generateStaticAsset()` helper. Added composite cache key with all rendering parameters. Added `fetchRemoteImage()` with `allow_url_fopen` check, curl fallback, and 10-second timeout. Fixed CSP port bug for non-standard ports. Simplified regex noise.
 - **v1.5.3** (2026-05-30): removed twigFilter because it throws error if already registered.
 - **v1.5.2** (2026-05-30): removed twigFilter because it throws error if already registered.
@@ -121,4 +122,4 @@ In the standard browser view, diagrams are rendered dynamically by JavaScript in
 - **v1.0.0** (2025-12-30): Initial release.
 
 ---
-v1.6.0 | © 2026  by M. Klein
+v1.6.1 | © 2026  by M. Klein

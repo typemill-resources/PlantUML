@@ -215,7 +215,7 @@ class plantuml extends plugin
      * Evaluates transparent background and border settings.
      * Uses `PlantUmlEncoder` to base64 translate the data using DEFLATE algorithms.
      */
-    private function generatePlantUmlUrl($code, array $params = null)
+    private function generatePlantUmlUrl($code, ?array $params = null)
     {
         if ($params === null)
         {
