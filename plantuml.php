@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Mark Klein
 
-namespace plugins\plantuml;
+namespace Plugins\plantuml;
 
-use \typemill\plugin;
-use plugins\plantuml\PlantUmlEncoder;
+use \Typemill\Plugin;
+use Plugins\plantuml\PlantUmlEncoder;
 
 /**
  * Class plantuml
@@ -14,7 +14,7 @@ use plugins\plantuml\PlantUmlEncoder;
  * This plugin hooks into the Typemill event system to intercept PlantUML 
  * syntax blocks in markdown and dynamically replaces them with rendered graphics.
  */
-class plantuml extends plugin
+class plantuml extends Plugin
 {
     /**
      * Subscribe to specific Typemill events.

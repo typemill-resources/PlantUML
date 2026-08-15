@@ -8,7 +8,7 @@
  * Copyright (c) Jawira
  */
  
-namespace plugins\plantuml;
+namespace Plugins\plantuml;
 
 /**
  * Class PlantUmlEncoder
