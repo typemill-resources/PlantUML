@@ -228,7 +228,7 @@ class plantuml extends Plugin
             ];
         }
 
-        $serverUrl   = $params['server_url'];
+        $serverUrl   = $this->normalizeServerUrl($params['server_url']);
         $format      = $params['format'];
         $transparent = $params['transparent_background'];
         $borderColor = $params['border_color'];
@@ -248,6 +248,23 @@ class plantuml extends Plugin
         $encoded = $encoder->encode($code);
 
         return $serverUrl . '/' . $format . '/' . $encoded;
+    }
+
+    private function normalizeServerUrl(string $serverUrl): string
+    {
+        $serverUrl = rtrim(trim($serverUrl), '/');
+        $parts = parse_url($serverUrl);
+
+        if (is_array($parts)
+            && in_array(strtolower($parts['host'] ?? ''), ['plantuml.com', 'www.plantuml.com'], true)
+            && empty($parts['path'])
+            && !isset($parts['query'])
+            && !isset($parts['fragment']))
+        {
+            $serverUrl .= '/plantuml';
+        }
+
+        return $serverUrl;
     }
 
     /**

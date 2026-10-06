@@ -27,7 +27,7 @@ This plugin allows you to generate PlantUML diagrams directly within your [Typem
 2.  Go to **System** -> **Plugins**.
 3.  Activate the **PlantUML** plugin.
 4.  Click on **Settings** for the PlantUML plugin.
-5.  **Server URL**: Enter the URL of the PlantUML server. Default is `http://www.plantuml.com/plantuml`.
+5.  **Server URL**: Enter the base URL of the PlantUML server, including its deployment path. Default is `https://www.plantuml.com/plantuml`. The public host URLs `https://www.plantuml.com` and `https://plantuml.com` are automatically completed with `/plantuml`. Self-hosted URLs retain their configured paths.
 6.  **Output Format**: Select `SVG Vector` (recommended) or `PNG Image`.
 7.  **Transparent Background**: Check this box to make the background transparent (works best with SVG).
 8.  **Border Color**: Enter a color (e.g., `#393b41`, `black`, `red`) to draw a border around the entire image. Leave empty for no border.
@@ -108,6 +108,7 @@ In the standard browser view, diagrams are rendered dynamically by JavaScript in
 
 ## Version Changelog
 
+- **v1.6.2** (2026-10-06): Fixed broken diagram URLs when the public PlantUML server is configured without its `/plantuml` deployment path. Normalizes surrounding whitespace and trailing slashes while preserving self-hosted server paths. Added standalone URL regression tests (`php plugins/plantuml/tests/server-url.php`).
 - **v1.6.1** (10.08.2026): Fixed PHP 8.4/8.5 deprecation by explicitly marking the `$params` parameter of `generatePlantUmlUrl()` as nullable (`?array`). Verified compatibility with PHP 8.2, 8.3, 8.4, and 8.5.
 - **v1.6.0** (15.07.2026): Added `onExportHtmlLoaded` support for export-safe HTML generation (EPUB/PDF/static). Removed broken Twig filter. Migrated cache from `plugins/plantuml/temp/` to `/cache/generated/plantuml/` via core `generateStaticAsset()` helper. Added composite cache key with all rendering parameters. Added `fetchRemoteImage()` with `allow_url_fopen` check, curl fallback, and 10-second timeout. Fixed CSP port bug for non-standard ports. Simplified regex noise.
 - **v1.5.3** (2026-05-30): removed twigFilter because it throws error if already registered.
@@ -122,4 +123,4 @@ In the standard browser view, diagrams are rendered dynamically by JavaScript in
 - **v1.0.0** (2025-12-30): Initial release.
 
 ---
-© 2026  by M. Klein
+v1.6.2 | © 2026  by M. Klein
