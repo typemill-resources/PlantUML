@@ -2,6 +2,8 @@
 
 This document provides an in-depth explanation of the technical architecture and underlying design decisions integrated into the **PlantUML for Typemill** plugin. Its purpose is to guide developers or maintainers understanding how the original static workflows were replaced with a hybrid browser/PDF/ePub rendering approach.
 
+Architecture documented for **version 1.6.3 (2026-10-31)**. The complete release summary and verification status are listed in the README changelog.
+
 ## 1. The Typemill Markdown Lifecycle
 
 Typemill uses `Parsedown` to interpret and compile Markdown `.md` text into standard HTML. Historically, plugins (including older versions of this PlantUML plugin) used the `onMarkdownLoaded` event.
@@ -32,30 +34,19 @@ Upon DOM load, the JavaScript scans for elements bearing the `plantuml-browser-r
 
 This guarantees cross-origin independence while keeping browser operations lean. 
 
-## 3. The eBook (PDF/ePub) Conundrum
+## 3. Static eBook Images
 
-eBook layout generators (like mPDF or DOMPDF, which Typemill Ebook systems utilize internally) struggle substantially with:
-1. JavaScript execution (rendering `div` based elements in realtime).
-2. Complex Cross-Origin (CORS) or external URL policies.
+The `onExportHtmlLoaded` handler replaces diagram code blocks or browser-render containers with static `<figure><img ...></figure>` markup. Image downloads happen on the PHP host, using `file_get_contents()` with a curl fallback. The host must be able to reach the configured PlantUML server; no JavaScript is needed to construct the exported images.
 
-If we exposed the raw JS algorithm or pure external urls to the eBook renderer, it would return blank spots.
+### PDF Preview Without Twig Extensions
 
-### Twig Rendering and Transitory Storage (`plugins/plantuml/temp/`)
+The Ebooks preview does not emit `onExportHtmlLoaded`. On the `tm/ebooks/preview` route only, `onTwigLoaded` installs a plugin-local Slim view adapter, `PlantUmlExportView`. Before rendering a book layout, the adapter sends each chapter's HTML and source context to the existing export handler. It then uses the original Twig environment and loader to render the prepared data.
 
-The plugin registers a standalone Twig Filter (`{{ content | plantuml }}`), designed especially for the static book generators.
-When the Ebook plugin triggers this filter to compile its templates, our `processHtmlContent` pipeline parses everything looking for either pristine `pre/code` blocks or our manipulated `div` wrappers.
+No additional Twig extension, filter, function, node visitor, or runtime loader is registered. Default view variables remain shared with the original Slim view, existing compiled templates remain usable, and repeated events do not install nested adapters. The Ebooks plugin and layout files remain unchanged.
 
-Once found, it uses PHP's `file_get_contents()` to secretly download the resulting binary from the external PlantUML server (mimicking what the browser handles locally).
+### Image Cache
 
-**The Storage Location Strategy:**
-It saves the file persistently under `plugins/plantuml/temp/`.
-*Why `plugins/plantuml/temp/`?* Typemill routes intercept standard media configurations (like `media/files/`) using an `.htaccess` rule that forces file downloads (`application/octet-stream` & `attachment`) when processed through PHP. If we deployed our SVGs inside standard folders, the web-servers would stubbornly refuse to serve them to the internal web-engine as visual `<img>` payloads. By pushing the files strictly to a `temp/` folder inside the isolated `plugins` ecosystem, we ensure Apache/Nginx can serve them smoothly through the correct Native Mime-Types (`image/svg+xml`).
-
-### Smart Cashing
-We process the data through an offline cache. Each physical image operates using an MD5 hash calculation derived intimately from the internal base64 Diagram content (`$fileName = md5($imageUrl)`). 
-If the file exists locally, the PHP system assumes the Markdown blueprint hasn't shifted and loads the previous asset instead of triggering remote downloads. The cache auto-busts the exact moment a user edits their Typemill syntax.
-
-*Disclaimer: Transient image generations remain permanently cached to circumvent disk fragmentation. Periodic pruning of the `temp/` folder might be necessary depending on server capabilities.*
+Typemill's `generateStaticAsset()` helper stores images under `/cache/generated/plantuml/`. The SHA1 cache key includes the diagram source, server URL, output format, transparency, and border color. Existing images are reused without another download. Display-only parameters such as alignment and maximum width are applied to the HTML rather than the shared image bytes.
 
 ## 4. Parsedown Parameter Extraction
 
@@ -63,8 +54,9 @@ A core feature is that users can style diagrams directly from standard Fenced ta
 ````markdown
 ```plantuml-diagram align="left" padding="2rem"
 ````
-Typemill's Parsedown interpreter translates extra string parameters onto the CSS `class=""` element associated with the code block wrapper.
-Using the internal parsing algorithm (`parseAttributes()`), the plugin identifies the strings (`align=`, `size=`, `padding=`) extracted strictly from the regex catch loops. 
+Typemill's Parsedown interpreter keeps only the language identifier in the code block's CSS class and discards the additional parameters. A plugin-local subclass of the installed parser collects the original fenced declarations without replacing or saving Markdown. For browser pages, the read-only `onMarkdownLoaded` hook supplies the source. For ebook chapters, the export handler reads the chapter's Markdown file using the supplied source context.
+
+The plugin matches parameters to diagram text and occurrence order, so identical diagrams can retain different display settings. `parseAttributes()` handles `align`, `size`, and `padding`, including quoted CSS values containing spaces.
 
 These configuration keys are actively transposed directly into the respective HTML node styles to maximize identical behavior between offline PDFs and active web-pages.
 

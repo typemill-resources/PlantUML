@@ -16,6 +16,8 @@ use Plugins\plantuml\PlantUmlEncoder;
  */
 class plantuml extends Plugin
 {
+    private array $markdownAttributes = [];
+
     /**
      * Subscribe to specific Typemill events.
      *
@@ -24,6 +26,7 @@ class plantuml extends Plugin
     public static function getSubscribedEvents()
     {
         return [
+            'onMarkdownLoaded'   => 'onMarkdownLoaded',
             'onHtmlLoaded'       => 'onHtmlLoaded',
             'onExportHtmlLoaded' => 'onExportHtmlLoaded',
             'onCspLoaded'        => 'onCspLoaded',
@@ -56,21 +59,53 @@ class plantuml extends Plugin
         }
     }
 
-    /**
-     * Replaces standard pre-formatted PlantUML code blocks inside the final HTML 
-     * with customized divs suitable for JavaScript-driven browser rendering.
-     * We do this in onHtmlLoaded instead of onMarkdownLoaded to prevent altering the RAW content
-     * presented inside the Typemill Author editor.
-     *
-     * @param object $plugindata Event data payload containing the parsed HTML.
-     */
+    public function onMarkdownLoaded($event)
+    {
+        $markdown = $event->getData();
+        $this->markdownAttributes = is_string($markdown) ? $this->collectMarkdownAttributes($markdown) : [];
+    }
+
+    private function collectMarkdownAttributes(string $markdown): array
+    {
+        require_once __DIR__ . '/PlantUmlMarkdown.php';
+
+        $parser = new PlantUmlMarkdown();
+        $parser->markup($parser->text($markdown));
+        $attributes = [];
+        foreach ($parser->diagrams as $diagram)
+        {
+            $attributes[$this->diagramKey($diagram['code'])][] = $this->parseAttributes($diagram['parameters']);
+        }
+
+        return $attributes;
+    }
+
+    private function diagramKey(string $code): string
+    {
+        return hash('sha256', trim(str_replace(["\r\n", "\r"], "\n", $code)));
+    }
+
+    private function resolveAttributes(string $code, string $parameters, array &$attributes): array
+    {
+        $key = $this->diagramKey($code);
+        if (!empty($attributes[$key]))
+        {
+            return array_shift($attributes[$key]);
+        }
+
+        return $this->parseAttributes($parameters);
+    }
+
     public function onHtmlLoaded($plugindata)
     {
         $html = $plugindata->getData();
 
-        $regex = '/<pre><code class="language-plantuml-diagram(.*?)"[^>]*>\s*(.*?)\s*<\/code><\/pre>/ms';
+        $regex = '/<pre><code class="language-plantuml-diagram(?=\s|")(.*?)"[^>]*>\s*(.*?)\s*<\/code><\/pre>/ms';
 
-        $newHtml = preg_replace_callback($regex, array($this, 'processHtmlForBrowser'), $html);
+        $attributes = $this->markdownAttributes;
+        $newHtml = preg_replace_callback($regex, function ($matches) use (&$attributes) {
+            return $this->processHtmlForBrowser($matches, $attributes);
+        }, $html);
 
         $plugindata->setData($newHtml);
     }
@@ -86,27 +121,7 @@ class plantuml extends Plugin
         $data = $event->getData();
         $html = is_array($data) ? $data['html'] : $data;
 
-        // Handle raw <pre><code> blocks (if export plugin skipped onHtmlLoaded)
-        $regex1 = '/<pre><code class="language-plantuml-diagram(.*?)"[^>]*>\s*(.*?)\s*<\/code><\/pre>/ms';
-        $html = preg_replace_callback($regex1, function ($matches) {
-            $attrs = $this->parseAttributes($matches[1]);
-            $code  = html_entity_decode($matches[2], ENT_QUOTES | ENT_HTML5);
-            return $this->renderStaticPlantUml($code, $attrs);
-        }, $html);
-
-        // Handle already-transformed browser-render divs
-        $regex2 = '/<div class="plantuml-browser-render"[^>]*>.*?<pre class="plantuml-original-code"[^>]*><code>(.*?)<\/code><\/pre>.*?<\/div>/ms';
-        $html = preg_replace_callback($regex2, function ($matches) {
-            $code = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
-
-            $attrs = [];
-            if (preg_match('/data-plantuml-align="([^"]*)"/', $matches[0], $m)) $attrs['align'] = $m[1];
-            if (preg_match('/data-plantuml-padding="([^"]*)"/', $matches[0], $m)) $attrs['padding'] = $m[1];
-            if (preg_match('/data-plantuml-size="([^"]*)"/', $matches[0], $m)) $attrs['size'] = $m[1];
-            $attrs += ['align' => 'center', 'padding' => '', 'size' => ''];
-
-            return $this->renderStaticPlantUml($code, $attrs);
-        }, $html);
+        $html = $this->renderExportHtml($html, is_array($data) ? $data : []);
 
         if (is_array($data))
         {
@@ -119,6 +134,84 @@ class plantuml extends Plugin
         }
     }
 
+    private function getChapterMarkdown(array $chapter): ?string
+    {
+        $item = $chapter['item'] ?? [];
+        if (empty($item['path']))
+        {
+            return null;
+        }
+
+        $settings = $this->getSettings();
+        $path = $item['path'];
+        $meta = $chapter['metadata']['meta'] ?? [];
+        if (($meta['referencetype'] ?? '') === 'copy' && !empty($meta['reference']))
+        {
+            $navigation = new \Typemill\Models\Navigation();
+            $language = $settings['langattr'];
+            $page = $navigation->getPageInfoForUrl(trim($meta['reference'], '/'), $this->urlinfo, $language);
+            if ($page)
+            {
+                $tree = $navigation->getFullDraftNavigation($this->urlinfo, $language);
+                $reference = $navigation->getItemWithKeyPath($tree, explode('.', $page['keyPath']));
+                if ($reference)
+                {
+                    $path = $reference->path;
+                }
+            }
+        }
+
+        if (($item['elementType'] ?? '') === 'folder')
+        {
+            $path = rtrim($path, '/\\') . '/index.md';
+        }
+
+        $root = realpath($settings['rootPath'] . '/content');
+        $file = $root ? realpath($root . '/' . ltrim($path, '/\\')) : false;
+        if (!$file || !str_starts_with($file, $root . DIRECTORY_SEPARATOR) || !is_readable($file))
+        {
+            return null;
+        }
+
+        $markdown = file_get_contents($file);
+        return $markdown === false ? null : $markdown;
+    }
+
+    public function renderExportHtml(string $html, array $chapter = []): string
+    {
+        if (!str_contains($html, 'language-plantuml-diagram') && !str_contains($html, 'plantuml-browser-render'))
+        {
+            return $html;
+        }
+
+        $markdown = $this->getChapterMarkdown($chapter);
+        $attributes = $markdown !== null ? $this->collectMarkdownAttributes($markdown) : $this->markdownAttributes;
+
+        // Handle raw <pre><code> blocks (if export plugin skipped onHtmlLoaded)
+        $regex1 = '/<pre><code class="language-plantuml-diagram(?=\s|")(.*?)"[^>]*>\s*(.*?)\s*<\/code><\/pre>/ms';
+        $html = preg_replace_callback($regex1, function ($matches) use (&$attributes) {
+            $code  = html_entity_decode($matches[2], ENT_QUOTES | ENT_HTML5);
+            $attrs = $this->resolveAttributes($code, $matches[1], $attributes);
+            return $this->renderStaticPlantUml($code, $attrs);
+        }, $html);
+
+        // Handle already-transformed browser-render divs
+        $regex2 = '/<div class="plantuml-browser-render"[^>]*>.*?<pre class="plantuml-original-code"[^>]*><code>(.*?)<\/code><\/pre>.*?<\/div>/ms';
+        $html = preg_replace_callback($regex2, function ($matches) {
+            $code = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
+
+            $attrs = [];
+            if (preg_match('/data-plantuml-align="([^"]*)"/', $matches[0], $m)) $attrs['align'] = html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5);
+            if (preg_match('/data-plantuml-padding="([^"]*)"/', $matches[0], $m)) $attrs['padding'] = html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5);
+            if (preg_match('/data-plantuml-size="([^"]*)"/', $matches[0], $m)) $attrs['size'] = html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5);
+            $attrs += ['align' => 'center', 'padding' => '', 'size' => ''];
+
+            return $this->renderStaticPlantUml($code, $attrs);
+        }, $html);
+
+        return $html;
+    }
+
     /**
      * Executes when Twig initializes. Injects an inline JavaScript snippet
      * to the Web-Frontend to dynamically fetch and display PlantUML server images.
@@ -127,6 +220,17 @@ class plantuml extends Plugin
      */
     public function onTwigLoaded($event)
     {
+        if (trim($this->route, '/') === 'tm/ebooks/preview')
+        {
+            require_once __DIR__ . '/PlantUmlExportView.php';
+
+            $view = $this->getTwig();
+            if (!$view instanceof PlantUmlExportView)
+            {
+                $this->container->set('view', new PlantUmlExportView($view, [$this, 'onExportHtmlLoaded']));
+            }
+        }
+
         if (!$this->adminroute && !$this->editorroute)
         {
             $this->addInlineJS('
@@ -172,12 +276,13 @@ class plantuml extends Plugin
     private function parseAttributes($attrString)
     {
         $defaults = ['align' => 'center', 'padding' => '', 'size' => ''];
+        $attrString = html_entity_decode($attrString, ENT_QUOTES | ENT_HTML5);
         if (empty(trim($attrString))) return $defaults;
 
         $rules = ['align', 'padding', 'size'];
         foreach ($rules as $rule) {
-            if (preg_match('/(?:^|\s)' . $rule . '=["\']?([^"\'\s]+)["\']?(?:\s|$)/i', $attrString, $m)) {
-                $defaults[$rule] = $m[1];
+            if (preg_match('/(?:^|\s)' . $rule . '\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\']+))(?=\s|$)/i', $attrString, $m, PREG_UNMATCHED_AS_NULL)) {
+                $defaults[$rule] = $m[1] ?? $m[2] ?? $m[3];
             }
         }
         return $defaults;
@@ -187,16 +292,16 @@ class plantuml extends Plugin
      * Parses the HTML payload replacing standard PlantUML tags with `div.plantuml-browser-render`.
      * Caches the original text into a hidden `pre` item inside the structure to not lose data for the editor.
      */
-    private function processHtmlForBrowser($matches)
+    private function processHtmlForBrowser($matches, array &$attributes)
     {
         if (!empty($matches[2])) {
-            $attrs = $this->parseAttributes($matches[1]);
             $code = html_entity_decode($matches[2], ENT_QUOTES | ENT_HTML5);
+            $attrs = $this->resolveAttributes($code, $matches[1], $attributes);
             $imageUrl = $this->generatePlantUmlUrl($code);
             
             $alignStr = ' data-plantuml-align="' . htmlspecialchars($attrs['align']) . '"';
-            $paddingStr = !empty($attrs['padding']) ? (' data-plantuml-padding="' . htmlspecialchars($attrs['padding']) . '"') : '';
-            $sizeStr = !empty($attrs['size']) ? (' data-plantuml-size="' . htmlspecialchars($attrs['size']) . '"') : '';
+            $paddingStr = $attrs['padding'] !== '' ? (' data-plantuml-padding="' . htmlspecialchars($attrs['padding']) . '"') : '';
+            $sizeStr = $attrs['size'] !== '' ? (' data-plantuml-size="' . htmlspecialchars($attrs['size']) . '"') : '';
             
             $styleStr = ' style="text-align: ' . htmlspecialchars($attrs['align']) . ';"';
 
@@ -354,9 +459,9 @@ class plantuml extends Plugin
         $padding = $attributes['padding'] ?? '';
         $size    = $attributes['size'] ?? '';
         
-        $figureStyle = "text-align: {$align};" . (!empty($padding) ? " padding: {$padding};" : "") . " margin: 0;";
-        $imgStyle    = !empty($size) ? "max-width: {$size}; width: 100%;" : "max-width: 100%;";
+        $figureStyle = "display: block; width: 100%; box-sizing: border-box; text-align: {$align};" . ($padding !== '' ? " padding: {$padding};" : "") . " margin: 0;";
+        $imgStyle    = 'display: inline-block; vertical-align: middle; margin: 0; ' . ($size !== '' ? "max-width: {$size}; width: 100%;" : "max-width: 100%;");
         
-        return '<figure style="' . $figureStyle . '"><img src="' . htmlspecialchars($imageUrl, ENT_QUOTES) . '" alt="PlantUML diagram" class="plantuml-diagram" style="' . $imgStyle . '" /></figure>';
+        return '<figure style="' . htmlspecialchars($figureStyle, ENT_QUOTES) . '"><img src="' . htmlspecialchars($imageUrl, ENT_QUOTES) . '" alt="PlantUML diagram" class="plantuml-diagram" style="' . htmlspecialchars($imgStyle, ENT_QUOTES) . '" /></figure>';
     }
 }

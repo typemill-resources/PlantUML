@@ -59,6 +59,10 @@ Example:
 
 The plugin will process any `plantuml-diagram` block and dynamically render it as an image in your browser.
 
+The same `align`, `padding`, and `size` parameters are applied to static ebook images. Quoted CSS values containing spaces, such as `padding="10px 20px"`, are supported. Identical diagrams can have different display parameters without sharing their alignment or size.
+
+Static figures use a full-width block container and an inline-block image so alignment also works in layouts such as Damovo, which otherwise apply `display: table` to figures and `display: block` to images. Padding stays inside the figure width.
+
 ### Displaying Code
 
 To display PlantUML code as a code block (without rendering it), use the standard `plantuml` identifier:
@@ -96,7 +100,19 @@ When an export plugin (e.g. Ebooks) requests export-safe HTML, the PlantUML plug
 3.  Caches the image under `/cache/generated/plantuml/` using a SHA1 content hash that includes all rendering parameters (server URL, format, transparency, border color).
 4.  Replaces the dynamic browser markup with a static `<img>` tag wrapped in a `<figure>` element.
 
-No Twig filters or manual template changes are required. The export plugin simply dispatches `onExportHtmlLoaded` and receives fully static, self-contained HTML.
+No manual template changes are required. The export plugin simply dispatches `onExportHtmlLoaded` and receives HTML referencing static, locally cached images.
+
+### Ebooks PDF Preview
+
+The Ebooks plugin's **Preview PDF** path does not dispatch `onExportHtmlLoaded`. Only on the `tm/ebooks/preview` route, PlantUML uses `onTwigLoaded` to wrap the existing Slim view in `PlantUmlExportView`. Before a book layout is rendered, this adapter passes each chapter's HTML, source item, metadata, and base URL to the PlantUML plugin's existing `onExportHtmlLoaded` handler through an `OnExportHtmlLoaded` event.
+
+The adapter then renders the prepared book data using the original Twig environment, template loader, and shared default variables. It registers **no Twig extension, filter, function, node visitor, or runtime loader**, and it does not change compiled templates. Existing Twig caches can be used without recompilation. Repeated `onTwigLoaded` events do not wrap the view twice; other routes keep their original view.
+
+The existing `plantuml-diagram` fenced code blocks remain unchanged in Markdown. No changes to the Ebooks plugin or book layouts are needed. Ordinary `plantuml` code blocks and other images are left untouched. Static image generation stays in `onExportHtmlLoaded`; the Slim view adapter only supplies the missing preview call and chapter context.
+
+Typemill's Markdown parser removes additional parameters from fenced-code language declarations. To retain them, PlantUML collects the original declarations with a plugin-local subclass of the installed parser. In the browser, `onMarkdownLoaded` captures parameters without changing the Markdown event data. For ebook chapters, the renderer reads the corresponding Markdown file under the configured content directory, using the chapter context. Folder chapters use `index.md`; copied-page chapters use their referenced source. Parameters are matched to diagram text and occurrence order before generating image markup.
+
+The Markdown hook also receives block arrays in the visual editor. Parameter extraction runs only for string payloads; block arrays and other non-text values are left unchanged and clear any previously captured parameters. This avoids type errors without rewriting editor content.
 
 ### Browser Rendering
 
@@ -104,11 +120,37 @@ In the standard browser view, diagrams are rendered dynamically by JavaScript in
 
 ### Requirements for Export
 
-- The export plugin must dispatch the `onExportHtmlLoaded` event before generating the final output.
+- The export plugin must dispatch `onExportHtmlLoaded`, or use the Ebooks preview path with `onTwigLoaded` and `chapter.content` output in `@booklayouts/` templates.
 - The PlantUML server must be reachable from the host (the plugin checks `allow_url_fopen` and falls back to `curl`).
 - Cached assets are stored in `/cache/generated/plantuml/` and can be safely deleted at any time.
 
+### Regression Tests
+
+```console
+php plugins/plantuml/tests/server-url.php
+php plugins/plantuml/tests/ebook-preview.php
+```
+
+The preview test uses the installed Markdown parser, Slim view, Twig, and the unchanged Damovo template. It verifies that no Twig extension or filter is added, the original renderer and defaults remain shared, unrelated routes are unchanged, and the preview calls `onExportHtmlLoaded` with the chapter context. It also checks the documented invocation and parameters from real Markdown, default values, repeated diagrams, SVG/PNG settings, transparency, border color, static image output, repeated events, existing compiled templates, and browser/export compatibility without downloading diagrams or writing production image caches. Temporary chapter fixtures and Twig cache files are created inside the plugin's test directory and removed afterward.
+
+When served locally, `plugins/plantuml/tests/ebook-preview.php?alignment-fixture=1` provides nine layout cases using the original Damovo CSS: left/center/right alignment with intrinsic, pixel-limited, and percentage-limited image sizes. This fixture supports browser position checks in screen and print media without accessing production content or downloading diagrams.
+
 ## Version Changelog
+
+### v1.6.3 (2026-10-31)
+
+- Fixed missing PlantUML images in the Ebooks plugin's **Preview PDF**, including the Damovo layout. The plugin-local `PlantUmlExportView` adapter passes chapter HTML and source context to `onExportHtmlLoaded` before rendering, producing static images through the existing cache helper.
+- Kept all changes inside the PlantUML plugin. No changes to Typemill core, the Ebooks plugin, book layouts, or stored Markdown are required. No additional Twig extension, filter, function, node visitor, or runtime loader is registered.
+- Restricted the view adapter to `tm/ebooks/preview`. It reuses the original renderer, loader, compiled templates, and shared default variables; repeated events do not wrap the view twice. Other routes remain unchanged.
+- Preserved the documented `plantuml-diagram` code-block syntax and restored `align`, `padding`, and `size` parameters after the standard Markdown parser discards them. Added plugin-local source extraction for browser and ebook output, including folder chapters and copied-page references, with matching by diagram text and occurrence order.
+- Supported quoted CSS values containing spaces and explicit zero values. Identical diagrams can retain different alignment, padding, and size settings. Plain `plantuml` code blocks and fenced syntax examples remain code; language identifiers with additional suffixes are not treated as diagrams.
+- Fixed actual image alignment under Damovo CSS: static figures override shrink-to-fit table layout with a full-width block, and their images override block layout with inline-block display and zero margins. Border-box sizing keeps padding inside the available width. Added a browser fixture and CSS regression assertions.
+- Fixed a visual-editor `TypeError` in `onMarkdownLoaded`: the event can contain an array of editor blocks rather than a Markdown string. Non-text payloads now skip parameter extraction and clear stale parameter state without changing the event data. Added regression tests using parser-generated block arrays, JSON-decoded draft blocks, and empty values.
+- Kept SVG/PNG output, transparency, border color, browser rendering, and the existing export event compatible. Escaped generated style attributes and decoded browser-container attributes when exporting.
+- Updated the usage and architecture documentation. Added regression coverage for the unchanged Damovo template, existing Twig caches, export context, renderer defaults, route isolation, and documented parameters. Verification: **119 preview/compatibility checks**, **37 URL checks**, and PHP syntax checks passed. **36 browser position checks** passed with the original Damovo CSS across desktop/mobile widths and screen/print media.
+- Manual validation (2026-10-31): The authenticated PlantUML visual-editor page loaded without errors. Following further manual testing, the user confirmed that no errors remained. This manual confirmation is separate from the automated checks above.
+
+### Previous Versions
 
 - **v1.6.2** (2026-10-06): Fixed broken diagram URLs when the public PlantUML server is configured without its `/plantuml` deployment path. Normalizes surrounding whitespace and trailing slashes while preserving self-hosted server paths. Added standalone URL regression tests (`php plugins/plantuml/tests/server-url.php`).
 - **v1.6.1** (2026-08-10): Fixed PHP 8.4/8.5 deprecation by explicitly marking the `$params` parameter of `generatePlantUmlUrl()` as nullable (`?array`). Verified compatibility with PHP 8.2, 8.3, 8.4, and 8.5.
