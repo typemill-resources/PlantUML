@@ -13,8 +13,8 @@ This plugin allows you to generate PlantUML diagrams directly within your [Typem
 
 Lates version has been tested with
 
-- Typemill v2.27.0
-- PHP 8.5.11 or higher.
+- Typemill v2.28.0
+- PHP 8.5.12 or higher.
 
 ## Installation
 
